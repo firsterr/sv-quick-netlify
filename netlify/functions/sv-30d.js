@@ -1,4 +1,6 @@
-// netlify/functions/sv-30d.js  (CommonJS handler + IG/FB proxy fallback + debug)
+// netlify/functions/sv-30d.js
+// CommonJS handler + IG/FB 30g auto-count (direct + proxy fallbacks) + debug
+
 const UA_MOBILE  = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1";
 const UA_ANDROID = "Mozilla/5.0 (Linux; Android 11; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36";
 
@@ -47,7 +49,7 @@ function estimate(platform, totals, followers){
   return { engagement:E, reach, impr };
 }
 
-// ---------- Instagram (3 yöntem × direct/proxy)
+// ---------- Instagram helpers (JSON uçları direct-only!)
 async function igWebProfile(username, useProxy, dbg){
   const base=`https://i.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`;
   const url = useProxy?proxify(base):base;
@@ -74,16 +76,22 @@ async function igHTML(username, useProxy, dbg){
   const out=[]; let m; while((m=re.exec(src))){ out.push({ ts:+m[1], likes:+m[2], comments:+m[3], shares:0 }); }
   return out;
 }
+
+// IG: JSON (direct) → HTML (direct) → HTML (proxy). force=proxy olursa HTML’de proxy’yi öne al.
 async function scrapeInstagram(username, forceProxy, dbg){
-  const seq = [
-    (p)=>igWebProfile(username,p,dbg),
-    (p)=>igAParam(username,p,dbg),
-    (p)=>igHTML(username,p,dbg),
-  ];
-  if(!forceProxy){
-    for(const fn of seq){ try{ const r=await fn(false); if(r.length) return r; }catch(e){ dbg.push({step:"ig-direct-fail", err:String(e)}); } }
+  // 1) JSON endpoints — direct only (proxy JSON'u sadeleştirir, bozar)
+  try { const r = await igWebProfile(username, false, dbg); if (r.length) return r; } catch(e){ dbg.push({step:"ig-web_profile-direct-fail", err:String(e)}); }
+  try { const r = await igAParam(username,     false, dbg); if (r.length) return r; } catch(e){ dbg.push({step:"ig-a-param-direct-fail", err:String(e)}); }
+
+  // 2) HTML — order depends on forceProxy
+  if (forceProxy) {
+    try { const r = await igHTML(username, true,  dbg); if (r.length) return r; } catch(e){ dbg.push({step:"ig-html-proxy-fail", err:String(e)}); }
+    try { const r = await igHTML(username, false, dbg); if (r.length) return r; } catch(e){ dbg.push({step:"ig-html-direct-fail", err:String(e)}); }
+  } else {
+    try { const r = await igHTML(username, false, dbg); if (r.length) return r; } catch(e){ dbg.push({step:"ig-html-direct-fail", err:String(e)}); }
+    try { const r = await igHTML(username, true,  dbg); if (r.length) return r; } catch(e){ dbg.push({step:"ig-html-proxy-fail", err:String(e)}); }
   }
-  for(const fn of seq){ try{ const r=await fn(true); if(r.length) return r; }catch(e){ dbg.push({step:"ig-proxy-fail", err:String(e)}); } }
+
   return [];
 }
 
