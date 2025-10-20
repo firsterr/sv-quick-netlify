@@ -1,23 +1,24 @@
 // netlify/functions/sv-30d.js
-const UA_MOBILE = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1";
+const UA_MOBILE  = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1";
 const UA_ANDROID = "Mozilla/5.0 (Linux; Android 11; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36";
 
 const BM = {
-  instagram: { epr:[0.025,0.050,0.075], ipr:[1.05,1.20,1.35] },
-  facebook : { epr:[0.008,0.015,0.025], ipr:[1.02,1.10,1.20] }
+  instagram: { epr:[0.025,0.050,0.075], ipr:[1.05,1.20,1.35], cap:1.5 },
+  facebook : { epr:[0.008,0.015,0.025], ipr:[1.02,1.10,1.20], cap:1.2 },
 };
 
-function est(platform, likes, comments, shares){
-  const e = (likes||0)+(comments||0)+(shares||0);
-  const [el,em,eh] = BM[platform].epr;
-  const [il,im,ih] = BM[platform].ipr;
-  const rL = Math.floor(e/eh), rM = Math.floor(e/em), rH = Math.floor(e/el);
-  return {
-    engagement:e,
-    reach:{low:rL, mid:rM, high:rH},
-    impr:{low:Math.floor(rL*il), mid:Math.floor(rM*im), high:Math.floor(rH*ih)}
-  };
+// ---------- utils
+const proxify = (url) => {
+  const bare = url.replace(/^https?:\/\//i, "");
+  return `https://r.jina.ai/http://${bare}`; // reader proxy
+};
+
+async function fetchText(url, headers) {
+  const r = await fetch(url, { headers });
+  if (!r.ok) throw new Error(`${url} -> HTTP ${r.status}`);
+  return await r.text();
 }
+
 function toInt(s){
   if(!s) return 0;
   s = String(s).trim().replace(/\u00A0/g,' ').replace(/[^\d.,KMB]/gi,'');
@@ -29,59 +30,101 @@ function toInt(s){
   return Math.round(n);
 }
 
-// IG: 3 strateji
-async function igViaWebProfile(username){
-  const url = `https://i.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`;
-  const r = await fetch(url, { headers:{ "User-Agent": UA_MOBILE, "X-IG-App-ID":"936619743392459", "Accept":"*/*" }});
-  if(!r.ok) throw new Error("IG web_profile_info "+r.status);
-  const j = await r.json();
+function estimate(platform, totals, followers){
+  const b = BM[platform];
+  const E = (totals.likes||0)+(totals.comments||0)+(totals.shares||0);
+  const cap = followers ? Math.floor(followers * b.cap) : Infinity;
+  const [el,em,eh] = b.epr, [il,im,ih] = b.ipr;
+  const reach = {
+    low:  Math.min(Math.floor(E/eh), cap),
+    mid:  Math.min(Math.floor(E/em), cap),
+    high: Math.min(Math.floor(E/el), cap),
+  };
+  const impr = {
+    low:  Math.floor(reach.low  * il),
+    mid:  Math.floor(reach.mid  * im),
+    high: Math.floor(reach.high * ih),
+  };
+  return { engagement:E, reach, impr };
+}
+
+// ---------- Instagram (direct → proxy; 3 yöntem × 2 kanal)
+async function igViaWebProfile(username, useProxy=false){
+  const base = `https://i.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`;
+  const url  = useProxy ? proxify(base) : base;
+  const txt  = await fetchText(url, { "User-Agent": UA_MOBILE, "X-IG-App-ID":"936619743392459", "Accept":"*/*" });
+  const j    = JSON.parse(txt);
   const edges = j?.data?.user?.edge_owner_to_timeline_media?.edges || [];
-  return edges.map(e=>({ ts:e?.node?.taken_at_timestamp, likes:e?.node?.edge_liked_by?.count||0, comments:e?.node?.edge_media_to_parent_comment?.count||0, shares:0 }));
+  return edges.map(e => ({
+    ts: e?.node?.taken_at_timestamp,
+    likes: e?.node?.edge_liked_by?.count || 0,
+    comments: e?.node?.edge_media_to_parent_comment?.count || 0,
+    shares: 0,
+  }));
 }
-async function igViaAParam(username){
-  const url = `https://www.instagram.com/${encodeURIComponent(username)}/?__a=1&__d=dis`;
-  const r = await fetch(url, { headers:{ "User-Agent": UA_MOBILE, "Accept":"application/json" }});
-  if(!r.ok) throw new Error("IG ?__a=1 "+r.status);
-  const j = await r.json();
+async function igViaAParam(username, useProxy=false){
+  const base = `https://www.instagram.com/${encodeURIComponent(username)}/?__a=1&__d=dis`;
+  const url  = useProxy ? proxify(base) : base;
+  const txt  = await fetchText(url, { "User-Agent": UA_MOBILE, "Accept":"application/json" });
+  const j    = JSON.parse(txt);
   const edges = j?.graphql?.user?.edge_owner_to_timeline_media?.edges || j?.data?.user?.edge_owner_to_timeline_media?.edges || [];
-  return edges.map(e=>({ ts:e?.node?.taken_at_timestamp, likes:e?.node?.edge_liked_by?.count||0, comments:e?.node?.edge_media_to_parent_comment?.count||0, shares:0 }));
+  return edges.map(e => ({
+    ts: e?.node?.taken_at_timestamp,
+    likes: e?.node?.edge_liked_by?.count || 0,
+    comments: e?.node?.edge_media_to_parent_comment?.count || 0,
+    shares: 0,
+  }));
 }
-async function igViaHTML(username){
-  const url = `https://www.instagram.com/${encodeURIComponent(username)}/`;
-  const r = await fetch(url, { headers:{ "User-Agent": UA_MOBILE }});
-  const html = await r.text();
-  let edges = [];
+async function igViaHTML(username, useProxy=false){
+  const base = `https://www.instagram.com/${encodeURIComponent(username)}/`;
+  const url  = useProxy ? proxify(base) : base;
+  const html = await fetchText(url, { "User-Agent": UA_MOBILE });
+  let src = "";
   const m1 = html.match(/"edge_owner_to_timeline_media"\s*:\s*\{[^}]*"edges"\s*:\s*\[(.*?)\]\s*,/s);
-  const src = m1 ? m1[1] : (html.match(/"graphql"\s*:\s*\{[\s\S]*?\}/s)?.[0] || "");
+  src = m1 ? m1[1] : (html.match(/"graphql"\s*:\s*\{[\s\S]*?\}/s)?.[0] || "");
   const re = /"taken_at_timestamp"\s*:\s*(\d+)[\s\S]*?"edge_liked_by"\s*:\s*\{\s*"count"\s*:\s*(\d+)\s*\}[\s\S]*?(?:"edge_media_to_parent_comment"|"edge_media_to_comment")\s*:\s*\{\s*"count"\s*:\s*(\d+)\s*\}/g;
-  let m; while((m = re.exec(src))){ edges.push({ ts:+m[1], likes:+m[2], comments:+m[3], shares:0 }); }
-  return edges;
+  const out = []; let m;
+  while((m = re.exec(src))){ out.push({ ts:+m[1], likes:+m[2], comments:+m[3], shares:0 }); }
+  return out;
 }
 async function scrapeInstagram(username){
-  try { const e = await igViaWebProfile(username); if(e.length) return e; } catch(_){}
-  try { const e = await igViaAParam(username); if(e.length) return e; } catch(_){}
-  try { const e = await igViaHTML(username); if(e.length) return e; } catch(_){}
+  for (const fn of [
+    () => igViaWebProfile(username, false),
+    () => igViaAParam(username, false),
+    () => igViaHTML(username, false),
+    () => igViaWebProfile(username, true),
+    () => igViaAParam(username, true),
+    () => igViaHTML(username, true),
+  ]) {
+    try {
+      const list = await fn();
+      if (list && list.length) return list;
+    } catch (_) {}
+  }
   return [];
 }
 
-// Facebook: mbasic → m
+// ---------- Facebook (mbasic → m → proxy)
 async function scrapeFacebook(handle){
-  const urls = [`https://mbasic.facebook.com/${handle}`, `https://m.facebook.com/${handle}`];
-  for(const url of urls){
+  const variants = [
+    { url:`https://mbasic.facebook.com/${handle}`, headers:{ "User-Agent": UA_ANDROID }},
+    { url:`https://m.facebook.com/${handle}`,      headers:{ "User-Agent": UA_ANDROID }},
+    { url:proxify(`https://mbasic.facebook.com/${handle}`), headers:{ "User-Agent": UA_ANDROID }},
+    { url:proxify(`https://m.facebook.com/${handle}`),      headers:{ "User-Agent": UA_ANDROID }},
+  ];
+  for(const v of variants){
     try{
-      const r = await fetch(url,{ headers:{ "User-Agent": UA_ANDROID }});
-      const html = await r.text();
+      const html = await fetchText(v.url, v.headers);
       const chunks = html.split(/<article[^>]*>/i).slice(1);
       const posts = [];
       for(const ch of chunks){
         const tsMatch = ch.match(/data-utime="(\d+)"/) || ch.match(/data-utime=&quot;(\d+)&quot;/);
         if(!tsMatch) continue;
         const ts = parseInt(tsMatch[1],10);
-        function findCount(arr){ for(const rx of arr){ const m = ch.match(rx); if(m) return toInt(m[1]); } return 0; }
-        const likes = findCount([/>([\d.,KMB]+)\s*(?:likes?|beğen[^<]*)</i,/aria-label="([\d.,KMB]+)\s*(?:beğen|like)/i]);
-        const comments = findCount([/>([\d.,KMB]+)\s*(?:comments?|yorum[^<]*)</i,/aria-label="([\d.,KMB]+)\s*(?:yorum|comment)/i]);
-        const shares = findCount([/>([\d.,KMB]+)\s*(?:shares?|paylaş[^<]*)</i,/aria-label="([\d.,KMB]+)\s*(?:paylaş|share)/i]);
-        posts.push({ ts, likes, comments, shares });
+        const likes    = [/>\s*([\d.,KMB]+)\s*(?:likes?|beğen[^<]*)</i, /aria-label="([\d.,KMB]+)\s*(?:beğen|like)/i].reduce((a,r)=>a|| (ch.match(r)?.[1]),0); 
+        const comments = [/>\s*([\d.,KMB]+)\s*(?:comments?|yorum[^<]*)</i, /aria-label="([\d.,KMB]+)\s*(?:yorum|comment)/i].reduce((a,r)=>a|| (ch.match(r)?.[1]),0);
+        const shares   = [/>\s*([\d.,KMB]+)\s*(?:shares?|paylaş[^<]*)</i, /aria-label="([\d.,KMB]+)\s*(?:paylaş|share)/i].reduce((a,r)=>a|| (ch.match(r)?.[1]),0);
+        posts.push({ ts, likes:toInt(likes), comments:toInt(comments), shares:toInt(shares) });
       }
       if(posts.length) return posts;
     }catch(_){}
@@ -89,27 +132,36 @@ async function scrapeFacebook(handle){
   return [];
 }
 
+// ---------- main
 export default async (req) => {
   try{
     const u = new URL(req.url);
     let handle = (u.searchParams.get('handle')||'').trim();
-    if(!handle) return new Response(JSON.stringify({ error:"Missing handle. Use handle=instagram:@name or facebook:@name" }),{ status:400 });
+    const followers = parseInt(u.searchParams.get('followers')||"", 10) || undefined;
+
+    if(!handle) return new Response(JSON.stringify({ error:"Missing handle. Use handle=instagram:@name or facebook:@name" }), { status:400 });
 
     let platform=null, name=null;
     const m = handle.toLowerCase().match(/^(instagram|facebook):@?([a-z0-9_.\-]+)/i);
-    if(m){ platform=m[1]; name=m[2]; } else { const mm=handle.match(/^@?([a-z0-9_.\-]+)$/i); platform="instagram"; name=mm?mm[1]:null; }
-    if(!name) return new Response(JSON.stringify({ error:"Could not parse handle" }),{ status:400 });
+    if(m){ platform=m[1]; name=m[2]; } 
+    else { const mm = handle.match(/^@?([a-z0-9_.\-]+)$/i); platform="instagram"; name=mm?mm[1]:null; }
+    if(!name) return new Response(JSON.stringify({ error:"Could not parse handle" }), { status:400 });
 
     const posts = platform==="instagram" ? await scrapeInstagram(name) : await scrapeFacebook(name);
-    if(!posts.length) return new Response(JSON.stringify({ platform, handle:name, error:"No posts parsed (profile may be private/login-walled or tightened access)." }), { headers:{ "Content-Type":"application/json" } });
+    if(!posts.length) return new Response(JSON.stringify({ platform, handle:name, error:"No posts parsed (profile may be private/login-walled)." }), { headers:{ "Content-Type":"application/json" } });
 
-    const now = Math.floor(Date.now()/1000);
-    const cutoff = now - 30*24*3600;
-    const filtered = posts.filter(p => p.ts && p.ts >= cutoff);
-    const totals = filtered.reduce((a,p)=>{ a.likes+=p.likes||0; a.comments+=p.comments||0; a.shares+=p.shares||0; a.posts+=1; return a; }, {likes:0,comments:0,shares:0,posts:0});
-    const estimate = est(platform, totals.likes, totals.comments, totals.shares);
+    const now = Math.floor(Date.now()/1000), cutoff = now - 30*24*3600;
+    const last30 = posts.filter(p => p.ts && p.ts >= cutoff);
 
-    return new Response(JSON.stringify({ platform, handle:name, window_days:30, posts_counted: totals.posts, totals, estimate }), { headers:{ "Content-Type":"application/json" } });
+    const totals = last30.reduce((a,p)=>{ a.likes+=p.likes||0; a.comments+=p.comments||0; a.shares+=p.shares||0; a.posts+=1; return a; }, {likes:0,comments:0,shares:0,posts:0});
+    const est = estimate(platform, totals, followers);
+
+    return new Response(JSON.stringify({
+      platform, handle:name, window_days:30,
+      posts_counted: totals.posts, totals,
+      estimate: est
+    }), { headers:{ "Content-Type":"application/json" } });
+
   }catch(err){
     return new Response(JSON.stringify({ error:String(err) }), { status:500, headers:{ "Content-Type":"application/json" } });
   }
