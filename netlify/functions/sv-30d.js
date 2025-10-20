@@ -6,163 +6,134 @@ const BM = {
   instagram: { epr:[0.025,0.050,0.075], ipr:[1.05,1.20,1.35], cap:1.5 },
   facebook : { epr:[0.008,0.015,0.025], ipr:[1.02,1.10,1.20], cap:1.2 },
 };
+const proxify = (url) => `https://r.jina.ai/http://${url.replace(/^https?:\/\//i,"")}`;
 
-// ---------- utils
-const proxify = (url) => {
-  const bare = url.replace(/^https?:\/\//i, "");
-  return `https://r.jina.ai/http://${bare}`; // reader proxy
-};
-
-async function fetchText(url, headers) {
+async function fetchText(url, headers, dbg){
   const r = await fetch(url, { headers });
-  if (!r.ok) throw new Error(`${url} -> HTTP ${r.status}`);
-  return await r.text();
+  const t = await r.text().catch(()=> "");
+  dbg && dbg.push({step:"fetch", url, status:r.status, ok:r.ok});
+  if(!r.ok) throw new Error(`HTTP ${r.status}`);
+  return t;
 }
-
-function toInt(s){
-  if(!s) return 0;
-  s = String(s).trim().replace(/\u00A0/g,' ').replace(/[^\d.,KMB]/gi,'');
-  const m = s.match(/([\d.,]+)\s*([KMB])?/i);
-  if(!m) return parseInt(s.replace(/[^\d]/g,''),10)||0;
-  let n = parseFloat(m[1].replace('.','').replace(',','.'));
-  const suf = (m[2]||'').toUpperCase();
-  if(suf==='K') n*=1000; if(suf==='M') n*=1000000; if(suf==='B') n*=1000000000;
-  return Math.round(n);
+function toInt(s){ if(!s) return 0; s=String(s).replace(/\u00A0/g," ").replace(/[^\d.,KMB]/gi,"");
+  const m=s.match(/([\d.,]+)\s*([KMB])?/i); if(!m) return parseInt(s.replace(/[^\d]/g,""),10)||0;
+  let n=parseFloat(m[1].replace(".","").replace(",","."));
+  const u=(m[2]||"").toUpperCase(); if(u==="K") n*=1e3; if(u==="M") n*=1e6; if(u==="B") n*=1e9; return Math.round(n);
 }
-
 function estimate(platform, totals, followers){
-  const b = BM[platform];
-  const E = (totals.likes||0)+(totals.comments||0)+(totals.shares||0);
-  const cap = followers ? Math.floor(followers * b.cap) : Infinity;
-  const [el,em,eh] = b.epr, [il,im,ih] = b.ipr;
-  const reach = {
-    low:  Math.min(Math.floor(E/eh), cap),
-    mid:  Math.min(Math.floor(E/em), cap),
-    high: Math.min(Math.floor(E/el), cap),
-  };
-  const impr = {
-    low:  Math.floor(reach.low  * il),
-    mid:  Math.floor(reach.mid  * im),
-    high: Math.floor(reach.high * ih),
-  };
+  const b = BM[platform]; const E=(totals.likes||0)+(totals.comments||0)+(totals.shares||0);
+  const cap = followers ? Math.floor(followers*b.cap) : Infinity;
+  const [el,em,eh]=b.epr, [il,im,ih]=b.ipr;
+  const reach={low:Math.min(Math.floor(E/eh),cap), mid:Math.min(Math.floor(E/em),cap), high:Math.min(Math.floor(E/el),cap)};
+  const impr ={low:Math.floor(reach.low*il), mid:Math.floor(reach.mid*im), high:Math.floor(reach.high*ih)};
   return { engagement:E, reach, impr };
 }
 
-// ---------- Instagram (direct → proxy; 3 yöntem × 2 kanal)
-async function igViaWebProfile(username, useProxy=false){
-  const base = `https://i.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`;
-  const url  = useProxy ? proxify(base) : base;
-  const txt  = await fetchText(url, { "User-Agent": UA_MOBILE, "X-IG-App-ID":"936619743392459", "Accept":"*/*" });
-  const j    = JSON.parse(txt);
-  const edges = j?.data?.user?.edge_owner_to_timeline_media?.edges || [];
-  return edges.map(e => ({
-    ts: e?.node?.taken_at_timestamp,
-    likes: e?.node?.edge_liked_by?.count || 0,
-    comments: e?.node?.edge_media_to_parent_comment?.count || 0,
-    shares: 0,
-  }));
+// ---------- IG helpers
+async function igWebProfile(username, useProxy, dbg){
+  const base=`https://i.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`;
+  const url = useProxy?proxify(base):base;
+  const txt = await fetchText(url, { "User-Agent":UA_MOBILE, "X-IG-App-ID":"936619743392459", "Accept":"*/*" }, dbg);
+  const j = JSON.parse(txt);
+  const edges = j?.data?.user?.edge_owner_to_timeline_media?.edges||[];
+  return edges.map(e=>({ ts:e?.node?.taken_at_timestamp, likes:e?.node?.edge_liked_by?.count||0, comments:e?.node?.edge_media_to_parent_comment?.count||0, shares:0 }));
 }
-async function igViaAParam(username, useProxy=false){
-  const base = `https://www.instagram.com/${encodeURIComponent(username)}/?__a=1&__d=dis`;
-  const url  = useProxy ? proxify(base) : base;
-  const txt  = await fetchText(url, { "User-Agent": UA_MOBILE, "Accept":"application/json" });
-  const j    = JSON.parse(txt);
+async function igAParam(username, useProxy, dbg){
+  const base=`https://www.instagram.com/${encodeURIComponent(username)}/?__a=1&__d=dis`;
+  const url = useProxy?proxify(base):base;
+  const txt = await fetchText(url,{ "User-Agent":UA_MOBILE, "Accept":"application/json" }, dbg);
+  const j = JSON.parse(txt);
   const edges = j?.graphql?.user?.edge_owner_to_timeline_media?.edges || j?.data?.user?.edge_owner_to_timeline_media?.edges || [];
-  return edges.map(e => ({
-    ts: e?.node?.taken_at_timestamp,
-    likes: e?.node?.edge_liked_by?.count || 0,
-    comments: e?.node?.edge_media_to_parent_comment?.count || 0,
-    shares: 0,
-  }));
+  return edges.map(e=>({ ts:e?.node?.taken_at_timestamp, likes:e?.node?.edge_liked_by?.count||0, comments:e?.node?.edge_media_to_parent_comment?.count||0, shares:0 }));
 }
-async function igViaHTML(username, useProxy=false){
-  const base = `https://www.instagram.com/${encodeURIComponent(username)}/`;
-  const url  = useProxy ? proxify(base) : base;
-  const html = await fetchText(url, { "User-Agent": UA_MOBILE });
-  let src = "";
-  const m1 = html.match(/"edge_owner_to_timeline_media"\s*:\s*\{[^}]*"edges"\s*:\s*\[(.*?)\]\s*,/s);
-  src = m1 ? m1[1] : (html.match(/"graphql"\s*:\s*\{[\s\S]*?\}/s)?.[0] || "");
-  const re = /"taken_at_timestamp"\s*:\s*(\d+)[\s\S]*?"edge_liked_by"\s*:\s*\{\s*"count"\s*:\s*(\d+)\s*\}[\s\S]*?(?:"edge_media_to_parent_comment"|"edge_media_to_comment")\s*:\s*\{\s*"count"\s*:\s*(\d+)\s*\}/g;
-  const out = []; let m;
-  while((m = re.exec(src))){ out.push({ ts:+m[1], likes:+m[2], comments:+m[3], shares:0 }); }
-  return out;
+async function igHTML(username, useProxy, dbg){
+  const base=`https://www.instagram.com/${encodeURIComponent(username)}/`;
+  const url = useProxy?proxify(base):base;
+  const html= await fetchText(url,{ "User-Agent":UA_MOBILE }, dbg);
+  const src = (html.match(/"edge_owner_to_timeline_media"\s*:\s*\{[^}]*"edges"\s*:\s*\[(.*?)\]\s*,/s)?.[1]) ||
+              (html.match(/"graphql"\s*:\s*\{[\s\S]*?\}/s)?.[0]) || "";
+  const re  = /"taken_at_timestamp"\s*:\s*(\d+)[\s\S]*?"edge_liked_by"\s*:\s*\{\s*"count"\s*:\s*(\d+)\s*\}[\s\S]*?(?:"edge_media_to_parent_comment"|"edge_media_to_comment")\s*:\s*\{\s*"count"\s*:\s*(\d+)\s*\}/g;
+  const out=[]; let m; while((m=re.exec(src))){ out.push({ ts:+m[1], likes:+m[2], comments:+m[3], shares:0 }); } return out;
 }
-async function scrapeInstagram(username){
-  for (const fn of [
-    () => igViaWebProfile(username, false),
-    () => igViaAParam(username, false),
-    () => igViaHTML(username, false),
-    () => igViaWebProfile(username, true),
-    () => igViaAParam(username, true),
-    () => igViaHTML(username, true),
-  ]) {
-    try {
-      const list = await fn();
-      if (list && list.length) return list;
-    } catch (_) {}
-  }
+async function scrapeInstagram(username, forceProxy, dbg){
+  const seq = [
+    (p)=>igWebProfile(username,p,dbg),
+    (p)=>igAParam(username,p,dbg),
+    (p)=>igHTML(username,p,dbg),
+  ];
+  // direct then proxy  (or only proxy if forced)
+  if(!forceProxy){ for(const fn of seq){ try{ const r=await fn(false); if(r.length) return r; }catch(e){ dbg.push({step:"ig-direct-fail", err:String(e)});} }
+  for(const fn of seq){ try{ const r=await fn(true); if(r.length) return r; }catch(e){ dbg.push({step:"ig-proxy-fail", err:String(e)}); } }
   return [];
 }
 
-// ---------- Facebook (mbasic → m → proxy)
-async function scrapeFacebook(handle){
-  const variants = [
-    { url:`https://mbasic.facebook.com/${handle}`, headers:{ "User-Agent": UA_ANDROID }},
-    { url:`https://m.facebook.com/${handle}`,      headers:{ "User-Agent": UA_ANDROID }},
-    { url:proxify(`https://mbasic.facebook.com/${handle}`), headers:{ "User-Agent": UA_ANDROID }},
-    { url:proxify(`https://m.facebook.com/${handle}`),      headers:{ "User-Agent": UA_ANDROID }},
+// ---------- FB helpers
+async function scrapeFacebook(handle, forceProxy, dbg){
+  const urls = [
+    `https://mbasic.facebook.com/${handle}`,
+    `https://m.facebook.com/${handle}`,
   ];
-  for(const v of variants){
-    try{
-      const html = await fetchText(v.url, v.headers);
-      const chunks = html.split(/<article[^>]*>/i).slice(1);
-      const posts = [];
-      for(const ch of chunks){
-        const tsMatch = ch.match(/data-utime="(\d+)"/) || ch.match(/data-utime=&quot;(\d+)&quot;/);
-        if(!tsMatch) continue;
-        const ts = parseInt(tsMatch[1],10);
-        const likes    = [/>\s*([\d.,KMB]+)\s*(?:likes?|beğen[^<]*)</i, /aria-label="([\d.,KMB]+)\s*(?:beğen|like)/i].reduce((a,r)=>a|| (ch.match(r)?.[1]),0); 
-        const comments = [/>\s*([\d.,KMB]+)\s*(?:comments?|yorum[^<]*)</i, /aria-label="([\d.,KMB]+)\s*(?:yorum|comment)/i].reduce((a,r)=>a|| (ch.match(r)?.[1]),0);
-        const shares   = [/>\s*([\d.,KMB]+)\s*(?:shares?|paylaş[^<]*)</i, /aria-label="([\d.,KMB]+)\s*(?:paylaş|share)/i].reduce((a,r)=>a|| (ch.match(r)?.[1]),0);
-        posts.push({ ts, likes:toInt(likes), comments:toInt(comments), shares:toInt(shares) });
-      }
-      if(posts.length) return posts;
-    }catch(_){}
+  const list = [];
+  for(const raw of urls){
+    for(const u of (forceProxy?[proxify(raw)]:[raw, proxify(raw)])){
+      try{
+        const html = await fetchText(u,{ "User-Agent":UA_ANDROID }, dbg);
+        const chunks = html.split(/<article[^>]*>/i).slice(1);
+        for(const ch of chunks){
+          const tsMatch = ch.match(/data-utime="(\d+)"/) || ch.match(/data-utime=&quot;(\d+)&quot;/);
+          if(!tsMatch) continue;
+          const ts = parseInt(tsMatch[1],10);
+          const likes    = [/>\s*([\d.,KMB]+)\s*(?:likes?|beğen[^<]*)</i,/aria-label="([\d.,KMB]+)\s*(?:beğen|like)/i].reduce((a,r)=>a||(ch.match(r)?.[1]),0);
+          const comments = [/>\s*([\d.,KMB]+)\s*(?:comments?|yorum[^<]*)</i,/aria-label="([\d.,KMB]+)\s*(?:yorum|comment)/i].reduce((a,r)=>a||(ch.match(r)?.[1]),0);
+          const shares   = [/>\s*([\d.,KMB]+)\s*(?:shares?|paylaş[^<]*)</i,/aria-label="([\d.,KMB]+)\s*(?:paylaş|share)/i].reduce((a,r)=>a||(ch.match(r)?.[1]),0);
+          list.push({ ts, likes:toInt(likes), comments:toInt(comments), shares:toInt(shares) });
+        }
+        if(list.length) return list;
+      }catch(e){ dbg.push({step:"fb-fail", url:u, err:String(e)}); }
+    }
   }
   return [];
 }
 
 // ---------- main
 export default async (req) => {
+  const dbg = [];
   try{
     const u = new URL(req.url);
-    let handle = (u.searchParams.get('handle')||'').trim();
-    const followers = parseInt(u.searchParams.get('followers')||"", 10) || undefined;
+    let handle = (u.searchParams.get("handle")||"").trim();
+    const followers = parseInt(u.searchParams.get("followers")||"",10) || undefined;
+    const forceProxy = (u.searchParams.get("force")||"").toLowerCase()==="proxy";
+    const wantDebug  = (u.searchParams.get("debug")||"") === "1";
 
-    if(!handle) return new Response(JSON.stringify({ error:"Missing handle. Use handle=instagram:@name or facebook:@name" }), { status:400 });
+    if(!handle) return new Response(JSON.stringify({ error:"Missing handle. Use handle=instagram:@name or facebook:@name" }),{ status:400 });
 
     let platform=null, name=null;
     const m = handle.toLowerCase().match(/^(instagram|facebook):@?([a-z0-9_.\-]+)/i);
-    if(m){ platform=m[1]; name=m[2]; } 
-    else { const mm = handle.match(/^@?([a-z0-9_.\-]+)$/i); platform="instagram"; name=mm?mm[1]:null; }
-    if(!name) return new Response(JSON.stringify({ error:"Could not parse handle" }), { status:400 });
+    if(m){ platform=m[1]; name=m[2]; } else { const mm=handle.match(/^@?([a-z0-9_.\-]+)$/i); platform="instagram"; name=mm?mm[1]:null; }
+    if(!name) return new Response(JSON.stringify({ error:"Could not parse handle" }),{ status:400 });
 
-    const posts = platform==="instagram" ? await scrapeInstagram(name) : await scrapeFacebook(name);
-    if(!posts.length) return new Response(JSON.stringify({ platform, handle:name, error:"No posts parsed (profile may be private/login-walled)." }), { headers:{ "Content-Type":"application/json" } });
+    const posts = platform==="instagram"
+      ? await scrapeInstagram(name, forceProxy, dbg)
+      : await scrapeFacebook(name, forceProxy, dbg);
+
+    if(!posts.length){
+      const payload = { platform, handle:name, error:"No posts parsed (profile may be private/login-walled). Try force=proxy&debug=1", debug: wantDebug?dbg:undefined };
+      return new Response(JSON.stringify(payload), { headers:{ "Content-Type":"application/json" } });
+    }
 
     const now = Math.floor(Date.now()/1000), cutoff = now - 30*24*3600;
     const last30 = posts.filter(p => p.ts && p.ts >= cutoff);
+    if(!last30.length){
+      const payload = { platform, handle:name, error:"No posts in last 30 days.", debug: wantDebug?dbg:undefined };
+      return new Response(JSON.stringify(payload), { headers:{ "Content-Type":"application/json" } });
+    }
 
     const totals = last30.reduce((a,p)=>{ a.likes+=p.likes||0; a.comments+=p.comments||0; a.shares+=p.shares||0; a.posts+=1; return a; }, {likes:0,comments:0,shares:0,posts:0});
     const est = estimate(platform, totals, followers);
-
-    return new Response(JSON.stringify({
-      platform, handle:name, window_days:30,
-      posts_counted: totals.posts, totals,
-      estimate: est
-    }), { headers:{ "Content-Type":"application/json" } });
-
+    const res = { platform, handle:name, window_days:30, posts_counted: totals.posts, totals, estimate: est };
+    if(wantDebug) res.debug = dbg;
+    return new Response(JSON.stringify(res), { headers:{ "Content-Type":"application/json" } });
   }catch(err){
-    return new Response(JSON.stringify({ error:String(err) }), { status:500, headers:{ "Content-Type":"application/json" } });
+    return new Response(JSON.stringify({ error:String(err), debug:dbg }), { status:500, headers:{ "Content-Type":"application/json" } });
   }
 };
