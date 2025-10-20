@@ -99,7 +99,7 @@ async function scrapeFacebook(handle, forceProxy, dbg){
 export default async (req) => {
   const dbg = [];
   try{
-    const u = new URL(req.url);
+    const u = new URL(req.url, "https://dummy.local");
     let handle = (u.searchParams.get("handle")||"").trim();
     const followers = parseInt(u.searchParams.get("followers")||"",10) || undefined;
     const forceProxy = (u.searchParams.get("force")||"").toLowerCase()==="proxy";
