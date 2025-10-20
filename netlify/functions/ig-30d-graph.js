@@ -21,7 +21,7 @@ function summarize(media){
 }
 export default async (req, ctx) => {
   try{
-    const u = new URL(req.url);
+   const u = new URL(req.url, "https://dummy.local");
     const handle = (u.searchParams.get("handle")||"").trim();
     const m = handle.toLowerCase().match(/^(instagram:)?@?([a-z0-9_.\-]+)/i);
     if(!m) return new Response(JSON.stringify({ error:"Bad handle" }), { status:400 });
