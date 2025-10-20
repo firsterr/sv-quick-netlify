@@ -24,7 +24,10 @@
 <div class="wrap">
   <div class="card">
     <h1>SV Quick · 30 Günlük Tahmin</h1>
-    <div class="muted">Sadece ad yaz: <b>odakreport</b>. Varsayılan platform <b>Instagram</b>. Facebook için <b>facebook:@sayfaadi</b> yaz.</div>
+    <div class="muted">
+      Sadece ad yaz: <b>odakreport</b>. Varsayılan platform <b>Instagram</b>. Facebook için <b>facebook:@sayfaadi</b> yaz.<br>
+      <b>Not:</b> IG login duvarına takılırsan URL'ye <code>?graph=1</code> ekle (Graph API mod, Netlify env gerekir).
+    </div>
     <div class="row">
       <input id="handle" placeholder="odakreport veya facebook:@sayfaadi" autofocus>
       <button id="go">Hesapla</button>
@@ -48,14 +51,28 @@ function normalize(h){
 }
 function fmt(n){ return Number(n||0).toLocaleString('tr-TR'); }
 
+const useGraph = window.location.search.includes("graph=1");
+
+async function run(handle){
+  const endpoint = useGraph ? "/.netlify/functions/ig-30d-graph" : "/.netlify/functions/sv-30d";
+  const r = await fetch(endpoint + "?handle=" + encodeURIComponent(handle));
+  const j = await r.json();
+  if(j.error && !useGraph){
+    const r2 = await fetch("/.netlify/functions/ig-30d-graph?handle=" + encodeURIComponent(handle));
+    const j2 = await r2.json();
+    if(!j2.error) return j2;
+    return j;
+  }
+  return j;
+}
+
 async function go(){
   const raw = document.getElementById('handle').value;
   const handle = normalize(raw);
   if(!handle){ document.getElementById('status').textContent = "Bir kullanıcı adı yaz."; return; }
   document.getElementById('status').textContent = "Hesaplanıyor...";
   try{
-    const r = await fetch('/.netlify/functions/sv-30d?handle='+encodeURIComponent(handle));
-    const j = await r.json();
+    const j = await run(handle);
     if(j.error){ document.getElementById('status').textContent = "Hata: "+j.error; return; }
     const eng = (j.totals.likes||0)+(j.totals.comments||0)+(j.totals.shares||0);
     document.getElementById('posts').textContent = fmt(j.posts_counted||0);
