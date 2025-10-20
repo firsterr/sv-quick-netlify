@@ -1,3 +1,9 @@
-# SV Quick · Simple v2
-- 30g aggregator daha sağlam: Instagram için `web_profile_info` → `?__a=1` → HTML sıralı denemeler; Facebook için `mbasic` → `m` denemesi.
-- UI tek alanlı.
+# Simple + Graph
+UI tek alan. Graph modu: `?graph=1`.
+
+## Netlify Env
+- META_ACCESS_TOKEN
+- (optional) META_IG_BUSINESS_ID
+
+## Endpoint
+- /.netlify/functions/ig-30d-graph?handle=instagram:@username
