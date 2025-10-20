@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SV Quick · 30 Günlük Tahmin</title>
+  <style>
+    body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,Helvetica,Arial;margin:0;background:#0b1220;color:#e6e9ef}
+    .wrap{max-width:720px;margin:40px auto;padding:0 16px}
+    .card{background:#111a2b;border:1px solid #1f2b44;border-radius:16px;padding:20px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
+    h1{font-size:22px;margin:0 0 8px}
+    .muted{color:#93a1b3;font-size:13px;margin-bottom:12px}
+    input{width:100%;padding:14px;border-radius:12px;border:1px solid #26334f;background:#0e1626;color:#e6e9ef;outline:none}
+    .row{display:grid;grid-template-columns:1fr auto;gap:8px}
+    button{padding:14px 18px;border-radius:12px;border:1px solid #2b7cff;background:#2b7cff;color:#fff;font-weight:700;cursor:pointer}
+    .kpi{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px}
+    .box{background:#0b1426;border:1px dashed #24304a;border-radius:12px;padding:12px;text-align:center}
+    .lbl{font-size:12px;color:#9badc5}
+    .val{font-size:24px;font-weight:800}
+    .status{margin-top:10px;font-size:13px;color:#9badc5}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>SV Quick · 30 Günlük Tahmin</h1>
+    <div class="muted">Sadece ad yaz: <b>odakreport</b>. Varsayılan platform <b>Instagram</b>. Facebook için <b>facebook:@sayfaadi</b> yaz.</div>
+    <div class="row">
+      <input id="handle" placeholder="odakreport veya facebook:@sayfaadi" autofocus>
+      <button id="go">Hesapla</button>
+    </div>
+    <div id="status" class="status"></div>
+    <div class="kpi">
+      <div class="box"><div class="lbl">30g Post Sayısı</div><div id="posts" class="val">—</div></div>
+      <div class="box"><div class="lbl">30g Engagement</div><div id="eng" class="val">—</div></div>
+      <div class="box"><div class="lbl">30g Impressions (Mid)</div><div id="impr" class="val">—</div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+function normalize(h){
+  h=(h||'').trim();
+  if(!h) return null;
+  if(/^facebook:/.test(h) || /^instagram:/.test(h)) return h;
+  h = h.replace(/^@/,''); // strip leading @
+  return "instagram:@"+h; // default to instagram
+}
+function fmt(n){ return Number(n||0).toLocaleString('tr-TR'); }
+
+async function go(){
+  const raw = document.getElementById('handle').value;
+  const handle = normalize(raw);
+  if(!handle){ document.getElementById('status').textContent = "Bir kullanıcı adı yaz."; return; }
+  document.getElementById('status').textContent = "Hesaplanıyor...";
+  try{
+    const r = await fetch('/.netlify/functions/sv-30d?handle='+encodeURIComponent(handle));
+    const j = await r.json();
+    if(j.error){ document.getElementById('status').textContent = "Hata: "+j.error; return; }
+    const eng = (j.totals.likes||0)+(j.totals.comments||0)+(j.totals.shares||0);
+    document.getElementById('posts').textContent = fmt(j.posts_counted||0);
+    document.getElementById('eng').textContent = fmt(eng);
+    document.getElementById('impr').textContent = fmt(j.estimate.impr.mid||0);
+    document.getElementById('status').textContent = `${j.platform} · @${j.handle} · Son 30 gün`;
+  }catch(e){
+    document.getElementById('status').textContent = "İstek başarısız: "+e.message;
+  }
+}
+document.getElementById('go').addEventListener('click', go);
+document.getElementById('handle').addEventListener('keypress', (e)=>{ if(e.key==='Enter'){ go(); }});
+</script>
+</body>
+</html>
