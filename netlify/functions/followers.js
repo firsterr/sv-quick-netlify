@@ -30,17 +30,20 @@ function toInt(s){
 
 /* ---- Instagram followers */
 function igFollowersFromHtml(html){
-  // JSON gömülü alan
+  // JSON gömülü alanlar
   let m = html.match(/"edge_followed_by"\s*:\s*\{\s*"count"\s*:\s*(\d+)/);
   if(m) return parseInt(m[1],10);
   m = html.match(/"follower_count"\s*:\s*(\d+)/);
   if(m) return parseInt(m[1],10);
-  // meta description: "... 12,345 Followers, ..."
-  m = html.match(/content="([\d.,KMB]+)\s+Followers/i) || html.match(/content="([\d.,KMB]+)\s+Takipçi/i);
+
+  // <meta ... content="... 1,4 Mn Followers ..."> veya "Takipçi"
+  m = html.match(/content="[^"]*?([\d.,\s]*(?:K|M|B|k|m|b|Mn|mn|milyon|bin|bilyon)?)\s+(Followers|Takipçi)/i);
   if(m) return toInt(m[1]);
-  // düz metinde "Followers" / "Takipçi"
-  m = html.match(/([\d.,KMB]+)\s+Followers/i) || html.match(/([\d.,KMB]+)\s+Takipçi/i);
+
+  // Düz metin: "1,4 Mn Followers" / "1,4 Mn Takipçi"
+  m = html.match(/([\d.,\s]*(?:K|M|B|k|m|b|Mn|mn|milyon|bin|bilyon)?)\s+(Followers|Takipçi)/i);
   if(m) return toInt(m[1]);
+
   return null;
 }
 async function getIgFollowers(name){
