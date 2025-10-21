@@ -3,88 +3,87 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>SV Quick · 30 Günlük Tahmin</title>
+  <title>SV Quick · Takipçi Sayısı</title>
   <style>
-    body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,Helvetica,Arial;margin:0;background:#0b1220;color:#e6e9ef}
-    .wrap{max-width:720px;margin:40px auto;padding:0 16px}
-    .card{background:#111a2b;border:1px solid #1f2b44;border-radius:16px;padding:20px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
-    h1{font-size:22px;margin:0 0 8px}
-    .muted{color:#93a1b3;font-size:13px;margin-bottom:12px}
-    input{width:100%;padding:14px;border-radius:12px;border:1px solid #26334f;background:#0e1626;color:#e6e9ef;outline:none}
+    body{font-family:ui-sans-serif,-apple-system,Segoe UI,Roboto; margin:0; background:#0b1220; color:#e6e9ef}
+    .wrap{max-width:760px;margin:40px auto;padding:0 16px}
+    .card{background:#101a2c;border:1px solid #1f2b44;border-radius:16px;padding:20px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
+    h1{margin:0 0 10px;font-size:22px}
+    .muted{color:#9db0c8;font-size:13px;margin-bottom:12px}
     .row{display:grid;grid-template-columns:1fr auto;gap:8px}
+    input{width:100%;padding:14px;border-radius:12px;border:1px solid #26334f;background:#0e1626;color:#e6e9ef}
     button{padding:14px 18px;border-radius:12px;border:1px solid #2b7cff;background:#2b7cff;color:#fff;font-weight:700;cursor:pointer}
-    .kpi{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px}
-    .box{background:#0b1426;border:1px dashed #24304a;border-radius:12px;padding:12px;text-align:center}
-    .lbl{font-size:12px;color:#9badc5}
-    .val{font-size:24px;font-weight:800}
-    .status{margin-top:10px;font-size:13px;color:#9badc5}
+    table{width:100%;border-collapse:separate;border-spacing:0 8px;margin-top:14px}
+    th,td{padding:12px 14px;text-align:left;background:#0b1426;border:1px solid #24304a}
+    th:first-child,td:first-child{border-top-left-radius:10px;border-bottom-left-radius:10px}
+    th:last-child,td:last-child{border-top-right-radius:10px;border-bottom-right-radius:10px}
+    .right{text-align:right}
+    .status{margin-top:10px;font-size:13px;color:#9db0c8}
   </style>
 </head>
 <body>
 <div class="wrap">
   <div class="card">
-    <h1>SV Quick · 30 Günlük Tahmin</h1>
+    <h1>SV Quick · Takipçi Sayısı</h1>
     <div class="muted">
-      Sadece ad yaz: <b>odakreport</b>. Varsayılan platform <b>Instagram</b>. Facebook için <b>facebook:@sayfaadi</b> yaz.<br>
-      <b>Not:</b> IG login duvarına takılırsan URL'ye <code>?graph=1</code> ekle (Graph API mod, Netlify env gerekir).
+      Boşluğa veya virgülle birden çok ad yaz: <b>bbc odakreport stargazete</b>.<br>
+      Varsayılan platform <b>Instagram</b>. Facebook için <b>facebook:@sayfa</b> yaz.<br>
+      <i>Yalnızca takipçi sayısını getirir.</i>
     </div>
     <div class="row">
-      <input id="handle" placeholder="odakreport veya facebook:@sayfaadi" autofocus>
-      <button id="go">Hesapla</button>
+      <input id="handles" placeholder="örn: bbc odakreport facebook:@bbcturkce">
+      <button id="go">Getir</button>
     </div>
     <div id="status" class="status"></div>
-    <div class="kpi">
-      <div class="box"><div class="lbl">30g Post Sayısı</div><div id="posts" class="val">—</div></div>
-      <div class="box"><div class="lbl">30g Engagement</div><div id="eng" class="val">—</div></div>
-      <div class="box"><div class="lbl">30g Impressions (Mid)</div><div id="impr" class="val">—</div></div>
-    </div>
+    <table id="tbl" style="display:none">
+      <thead>
+        <tr><th>Handle</th><th>Platform</th><th class="right">Takipçi</th><th>Kaynak</th></tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
   </div>
 </div>
 
 <script>
-function normalize(h){
-  h=(h||'').trim();
-  if(!h) return null;
-  if(/^facebook:/.test(h) || /^instagram:/.test(h)) return h;
-  h = h.replace(/^@/,''); // strip leading @
-  return "instagram:@"+h; // default to instagram
+function normTokens(s){
+  return (s||"").trim().split(/[,\s]+/).filter(Boolean).slice(0,25);
 }
-function fmt(n){ return Number(n||0).toLocaleString('tr-TR'); }
+function fmt(n){ return n==null?"—":Number(n).toLocaleString('tr-TR'); }
 
-const useGraph = window.location.search.includes("graph=1");
-
-async function run(handle){
-  const endpoint = useGraph ? "/.netlify/functions/ig-30d-graph" : "/.netlify/functions/sv-30d";
-  const r = await fetch(endpoint + "?handle=" + encodeURIComponent(handle));
-  const j = await r.json();
-  if(j.error && !useGraph){
-    const r2 = await fetch("/.netlify/functions/ig-30d-graph?handle=" + encodeURIComponent(handle));
-    const j2 = await r2.json();
-    if(!j2.error) return j2;
-    return j;
+async function fetchFollowers(tokens){
+  const list = encodeURIComponent(tokens.join(","));
+  const r = await fetch("/.netlify/functions/followers?list="+list);
+  if(!r.ok) throw new Error("HTTP "+r.status);
+  return await r.json();
+}
+async function run(){
+  const input = document.getElementById('handles').value;
+  const tokens = normTokens(input);
+  if(tokens.length===0){
+    document.getElementById('status').textContent = "Önce bir veya daha fazla ad yaz.";
+    return;
   }
-  return j;
-}
-
-async function go(){
-  const raw = document.getElementById('handle').value;
-  const handle = normalize(raw);
-  if(!handle){ document.getElementById('status').textContent = "Bir kullanıcı adı yaz."; return; }
-  document.getElementById('status').textContent = "Hesaplanıyor...";
+  document.getElementById('status').textContent = "Çekiliyor…";
+  const tbody = document.getElementById('tbody'); tbody.innerHTML="";
+  document.getElementById('tbl').style.display="table";
   try{
-    const j = await run(handle);
-    if(j.error){ document.getElementById('status').textContent = "Hata: "+j.error; return; }
-    const eng = (j.totals.likes||0)+(j.totals.comments||0)+(j.totals.shares||0);
-    document.getElementById('posts').textContent = fmt(j.posts_counted||0);
-    document.getElementById('eng').textContent = fmt(eng);
-    document.getElementById('impr').textContent = fmt(j.estimate.impr.mid||0);
-    document.getElementById('status').textContent = `${j.platform} · @${j.handle} · Son 30 gün`;
+    const j = await fetchFollowers(tokens);
+    document.getElementById('status').textContent = "";
+    for(const it of j.items){
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${it.handle}</td>
+        <td>${it.platform}</td>
+        <td class="right">${fmt(it.followers)}</td>
+        <td>${it.source||"—"}</td>`;
+      tbody.appendChild(tr);
+    }
   }catch(e){
-    document.getElementById('status').textContent = "İstek başarısız: "+e.message;
+    document.getElementById('status').textContent = "Hata: "+e.message;
   }
 }
-document.getElementById('go').addEventListener('click', go);
-document.getElementById('handle').addEventListener('keypress', (e)=>{ if(e.key==='Enter'){ go(); }});
+document.getElementById('go').addEventListener('click', run);
+document.getElementById('handles').addEventListener('keypress', (e)=>{ if(e.key==='Enter'){ run(); }});
 </script>
 </body>
 </html>
