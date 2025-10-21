@@ -144,3 +144,12 @@ exports.handler = async (event) => {
 function respond(status, obj){
   return { statusCode: status, headers: { "Content-Type":"application/json; charset=utf-8" }, body: JSON.stringify(obj) };
 }
+async function getText(url, headers){
+  try{
+    const r = await F(url, { headers });
+    const t = await r.text().catch(()=> "");
+    return { ok:r.ok, status:r.status, text:t };
+  }catch(e){
+    return { ok:false, status:0, text:"", error:String(e) };
+  }
+}
