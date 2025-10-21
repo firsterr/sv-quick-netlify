@@ -7,25 +7,25 @@ const proxify = (url) => `https://r.jina.ai/http://${url.replace(/^https?:\/\//i
 
 function toInt(s){
   if(!s) return 0;
-  s = String(s).trim().replace(/\u00A0/g,' ').replace(/[^\d.,KMB]/gi,'');
-  const m = s.match(/([\d.,]+)\s*([KMB])?/i);
-  if(!m) return parseInt(s.replace(/[^\d]/g,''),10)||0;
-  let n = parseFloat(m[1].replace('.','').replace(',','.'));
-  const u = (m[2]||'').toUpperCase(); if(u==='K') n*=1e3; if(u==='M') n*=1e6; if(u==='B') n*=1e9;
-  return Math.round(n);
-}
-async function fetchText(url, headers){
-  const r = await fetch(url, { headers });
-  const t = await r.text().catch(()=> "");
-  if(!r.ok) throw new Error(`HTTP ${r.status}`);
-  return t;
-}
+  s = String(s).trim()
+    .replace(/\u00A0/g,' ')
+    // Lokal suffix normalizasyonu
+    .replace(/milyon/gi, 'M')
+    .replace(/\bmn\b/gi, 'M')     // 1,4 Mn
+    .replace(/\bm\.?n\b/gi, 'M')  // m.n varyantları
+    .replace(/\bbin\b/gi, 'K')
+    .replace(/bilyon/gi, 'B')
+    .replace(/\bbn\b/gi, 'B');
 
-function parseHandle(token){
-  token = token.trim();
-  const m = token.match(/^(instagram|facebook):@?([a-z0-9_.\-]+)/i);
-  if(m) return { platform: m[1].toLowerCase(), name: m[2].toLowerCase() };
-  return { platform: "instagram", name: token.replace(/^@/,'').toLowerCase() };
+  const m = s.match(/([\d.,]+)\s*([KkMmBb])?/);
+  if(!m) return parseInt(s.replace(/[^\d]/g,''),10)||0;
+
+  let n = parseFloat(m[1].replace(/\./g,'').replace(',', '.'));
+  const suf = (m[2]||'').toUpperCase();
+  if(suf==='K') n*=1e3;
+  if(suf==='M') n*=1e6;
+  if(suf==='B') n*=1e9;
+  return Math.round(n);
 }
 
 /* ---- Instagram followers */
