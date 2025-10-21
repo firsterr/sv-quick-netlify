@@ -1,3 +1,17 @@
+// --- fetch polyfill (Node 16 uyumu)
+let F = (typeof fetch === "function") ? fetch : null;
+if (!F) {
+  try {
+    // node-fetch v2 CJS uyumlu
+    // Not: package.json’a "node-fetch": "^2" eklenecek
+    F = require("node-fetch");
+  } catch (e) {
+    // esneme: ESM default export ihtimali
+    try { F = require("node-fetch").default; } catch (_) {}
+  }
+}
+if (!F) throw new Error("fetch not available"); 
+
 // netlify/functions/followers.js
 // CommonJS — Follower sayısı toplayıcı (Instagram/FB), multi-handle destekli.
 
